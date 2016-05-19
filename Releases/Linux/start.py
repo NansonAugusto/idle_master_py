@@ -10,6 +10,7 @@ import json
 import logging
 import datetime
 import ctypes
+from decimal import Decimal
 from colorama import init, Fore, Back, Style
 init()
 
@@ -37,12 +38,12 @@ except:
 	logging.warning(Fore.RED + "Error loading config file" + Fore.RESET)
 	raw_input("Press Enter to continue...")
 	sys.exit()
-	
+
 if not authData["sessionid"]:
 	logging.warning(Fore.RED + "No sessionid set" + Fore.RESET)
 	raw_input("Press Enter to continue...")
 	sys.exit()
-	
+
 if not authData["steamLogin"]:
 	logging.warning(Fore.RED + "No steamLogin set" + Fore.RESET)
 	raw_input("Press Enter to continue...")
@@ -65,7 +66,7 @@ def dropDelay(numDrops):
 	else:
 		baseDelay = (5*60)
 	return baseDelay
-	
+
 def idleOpen(appID):
 	try:
 		logging.warning("Starting game " + getAppName(appID) + " to idle cards")
@@ -79,7 +80,7 @@ def idleOpen(appID):
 		elif sys.platform.startswith('darwin'):
 			process_idle = subprocess.Popen(["./steam-idle", str(appID)])
 		elif sys.platform.startswith('linux'):
-			process_idle = subprocess.Popen(["python2", "steam-idle.py", str(appID)])
+			process_idle = subprocess.Popen(["python2", "background.py", str(appID)])
 	except:
 		logging.warning(Fore.RED + "Error launching steam-idle with game ID " + str(appID) + Fore.RESET)
 		raw_input("Press Enter to continue...")
@@ -113,7 +114,7 @@ def chillOut(appID):
 			logging.warning("Still unable to find drop info.")
 	# Resume operations.
 	idleOpen(appID)
-	
+
 def getAppName(appID):
 	try:
 		api = requests.get("http://store.steampowered.com/api/appdetails/?appids=" + str(appID) + "&filters=basic")
@@ -142,6 +143,25 @@ def get_blacklist():
 		logging.warning("No games have been blacklisted")
 
 	return blacklist
+
+def createProcess(appID):
+	try:
+		if sys.platform.startswith('linux'):
+			tmp_process = subprocess.Popen(["python2", "background.py", str(appID)])
+			time.sleep(1.5)
+		else:
+			logging.warning(Fore.RED + "OS not supported" + Fore.RESET)
+			sys.exit();
+	except:
+		logging.warning(Fore.RED + "Error launching steam-idle with game ID " + str(appID) + Fore.RESET)
+		raw_input("Press Enter to continue...")
+		sys.exit()
+
+	return tmp_process
+
+def closeProcess(proc):
+	for p in proc:
+		p.terminate()
 
 logging.warning("Finding games that have card drops remaining")
 
@@ -184,16 +204,21 @@ if not userinfo:
 
 blacklist = get_blacklist()
 
+
+
 if authData["sort"]=="mostvalue" or authData["sort"]=="leastvalue":
 	logging.warning("Getting card values, please wait...")
 
-for badge in badgeSet:
+logging.warning("Getting card values, please wait...")
 
+lessTime = 2.0
+
+for badge in badgeSet:
 	try:
 		badge_text = badge.get_text()
 		dropCount = badge.find_all("span",{"class": "progress_info_bold"})[0].contents[0]
 		has_playtime = re.search("[0-9\.] hrs on record", badge_text) != None
-        
+
 		if "No card drops" in dropCount or (has_playtime == False and authData["hasPlayTime"].lower() == "true") :
 			continue
 		else:
@@ -203,6 +228,15 @@ for badge in badgeSet:
 			linkGuess = badge.find_parent().find_parent().find_parent().find_all("a")[0]["href"]
 			junk, badgeId = linkGuess.split("/gamecards/",1)
 			badgeId = int(badgeId.replace("/",""))
+			regex = "[\d\.]+(?= hrs)"
+
+			try:
+				hrs = re.search(regex, badge_text).group()
+				if lessTime > Decimal(hrs):
+					lessTime = Decimal(hrs)
+			except: # 0 hrs played
+				lessTime= 0.0
+
 			if badgeId in blacklist:
 				logging.warning(getAppName(badgeId) + " on blacklist, skipping game")
 				continue
@@ -240,12 +274,30 @@ else:
 	raw_input("Press Enter to continue...")
 	sys.exit()
 
+logging.warning(Fore.GREEN + "Open "+str(len(games))+" games" + Fore.RESET)
+
+proc = []
+if lessTime < 2:
+	try:		
+		for appID, d, v in games:
+			proc.append(createProcess(appID))
+
+		lessTime = (2 - lessTime) * 3600
+		timeSleep = 30 + int(lessTime)
+		
+		logging.warning(Fore.GREEN + "Sleep for "+str(timeSleep/60)+" minutes"+ Fore.RESET)
+		time.sleep(timeSleep)
+		closeProcess(proc)
+	except:
+		closeProcess(proc)
+		sys.exit();
+
 for appID, drops, value in games:
 	delay = dropDelay(int(drops))
 	stillHaveDrops=1
 	numCycles=50
 	maxFail=2
-	
+
 	idleOpen(appID)
 
 	logging.warning(getAppName(appID) + " has " + str(drops) + " card drops remaining")
