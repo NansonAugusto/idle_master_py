@@ -291,6 +291,7 @@ if lessTime < 2:
 	except:
 		closeProcess(proc)
 		sys.exit();
+del proc #Killing Zombies process
 
 for appID, drops, value in games:
 	delay = dropDelay(int(drops))
